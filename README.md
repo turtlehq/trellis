@@ -277,3 +277,130 @@ flowchart LR
     ST -->|repair| RP["Auto repair + notify"]
     ST -->|reject| CF["Typed Conflict -> surface to UI"]
 ```
+
+## 18) Examples
+
+### Todos
+
+```trellis
+page /todos {
+  // ---- Types & Data --------------------------------------------------------
+  type Todo { id:id; title:text; done:bool; owner:user; createdAt: time }
+  doc todos: Set<Todo>
+
+  // Access rules (capability-typed)
+  rule Read(u):  Rule<Todo> = todos.where(t => t.owner == u)
+  rule Write(u): Rule<Todo> = todos.where(t => t.owner == u)
+
+  // Indexing for planned replication
+  index TodosByOwner on todos (owner) covering (id,title,done,createdAt)
+
+  // Business invariant (example): no more than 200 open tasks
+  invariant WIP on todos
+    ensure count(t where t.owner == currentUser && !t.done) <= 200
+    repair reject() // surface a typed Conflict<WIP> to the UI
+
+  // ---- Server: queries, actions, export -----------------------------------
+  script server with (db, time) {
+    // Mint proofs at trust boundary (session)
+    checker session():
+      Proof<Read(currentUser)> & Proof<Write(currentUser)>
+
+    // Windowed list w/ filter & search; planner will use TodosByOwner
+    query list(
+      filter: "all" | "open" | "done",
+      q?: text,
+      cursor?: cursor,
+      limit?: number = 50
+    ) using session() returns Page<Todo> {
+      let base = db.select(todos)
+        .where(t => t.owner == currentUser)
+        .orderBy(createdAt desc)
+
+      if (filter == "open")  base = base.where(t => !t.done)
+      if (filter == "done")  base = base.where(t =>  t.done)
+      if (q)                 base = base.where(t => t.title.icontains(q))
+
+      return base.window(limit, cursor)
+    }
+
+    action add(title:text, can: Proof<Write(currentUser)>) {
+      let trimmed = title.trim()
+      if (trimmed == "") return error("Title required")
+      db.insert(todos, {
+        id: newId(), title: trimmed, done: false,
+        owner: currentUser, createdAt: time.now()
+      }, can)
+    }
+
+    action toggle(id:id, can: Proof<Write(currentUser)>) {
+      let t = db.get(todos, id, can)
+      db.update(todos, id, { done: !t.done }, can)
+    }
+
+    action clearCompleted(can: Proof<Write(currentUser)>) {
+      for (t in db.select(todos).where(x => x.owner == currentUser && x.done)) {
+        db.delete(todos, t.id, can)
+      }
+    }
+
+    // CSV export with backpressure/cancel
+    pipe exportCSV() -> stream<bytes> using session() {
+      yield encodeCSV(["id","title","done","createdAt"])
+      for (t in db.scan(todos).where(x => x.owner == currentUser)) {
+        yield encodeCSV([t.id, t.title, String(t.done), t.createdAt.toISO()])
+        await tick() // cooperative backpressure point
+      }
+    }
+  }
+
+  // ---- UI: state, derives, forms, list ------------------------------------
+  state filter: "all" | "open" | "done" = "all"
+  state q = ""
+  state adding = false
+
+  // Reactive, windowed data stream (planned replication diffs)
+  derive page = list(filter, q)
+  derive items = page.items
+  derive remaining = items.count(t => !t.done)
+  derive anyDone = items.some(t => t.done)
+
+  view App {
+    <header>
+      <h1>Todos</h1>
+      <Tabs bind:filter options={["all","open","done"]}/>
+      <Input name=search placeholder="Search…" bind:value=q />
+    </header>
+
+    <form enhance on:submit={add(title.value)} on:pending={() => adding=true} on:settled={() => adding=false}>
+      <Input name=title placeholder="What needs doing?" autocomplete="off"/>
+      <Button disabled={adding}>Add</Button>
+    </form>
+
+    <ul>
+      for t in items stream {
+        <li class:done={t.done}>
+          <input type="checkbox"
+                 checked={t.done}
+                 on:change={() => toggle(t.id)} />
+          <span>{t.title}</span>
+        </li>
+      }
+    </ul>
+
+    <footer>
+      <span>{remaining} items left</span>
+      <Button subtle disabled={!anyDone} on:click={clearCompleted}>Clear completed</Button>
+      <Button download from={exportCSV}>Export CSV</Button>
+    </footer>
+  }
+
+  // ---- Styles (compile-time tokens optional) -------------------------------
+  style App {
+    ul { margin: 12px 0; }
+    li { display:flex; gap:8px; padding:8px 4px; align-items:center; }
+    .done span { opacity: .55; text-decoration: line-through; }
+    footer { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-top:12px; }
+  }
+}
+```
