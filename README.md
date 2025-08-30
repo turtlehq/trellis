@@ -1,4 +1,4 @@
-# Trellis Manifesto
+# Trellis
 
 _A compiler-first stack for human‑centered software._
 
