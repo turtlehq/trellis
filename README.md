@@ -214,40 +214,66 @@ If the web is to remain our medium, the tools must serve product thinking, not c
 ### 17.1 Compiler Pipeline
 
 ```mermaid
-flowchart LR; A[Source Files (.trellis)]-->B[Parse & Type]; B-->C[Capability Flow (Proof Tracking)]; C-->D[Planner (queries, indexes, windows)]; D-->E[Split/Emit]; E-->F[Server Bundle: actions/queries]; E-->G[SSR HTML (static)]; E-->H[Islands Bytecode (interactive)];
+flowchart LR
+    A["Source Files (.trellis)"] --> B["Parse & Type"]
+    B --> C["Capability Flow (Proof Tracking)"]
+    C --> D["Planner (queries, indexes, windows)"]
+    D --> E["Split/Emit"]
+    E --> F["Server Bundle: actions/queries"]
+    E --> G["SSR HTML (static)"]
+    E --> H["Islands Bytecode (interactive)"]
 ```
 
 ### 17.2 Capability Proof Flow
 
 ```mermaid
-sequenceDiagram
-  participant U as User
-  participant UI as Trellis UI
-  participant S as Server (checker)
-  participant DB as Database
-  U->>UI: Submit form
-  UI->>S: call action.add(...)
-  S->>S: session() mints Proof<Write>
-  S->>DB: insert(todo, Proof<Write>)
-  DB-->>S: ok
-  S-->>UI: success + patch
-  Note right of UI: Proofs are non-serializable; capture → compile error
+flowchart LR
+    U["User"] --> UI["Trellis UI"]
+    UI -->|"Submit form"| S["Server (checker)"]
+    S -->|"call action.add(...)"| SC["session() mints<br/>Proof of Write"]
+    SC --> DB["Database"]
+    DB -->|"insert(todo, Proof)"| DBR["Database Response"]
+    DBR -->|"ok"| UI2["UI receives<br/>success + patch"]
+
+    N1["Note: Proofs are non-serializable<br/>capture -> compile error"]
 ```
 
 ### 17.3 Replication Plan & Client Replica
 
 ```mermaid
-flowchart LR; Q[query<T>]-->P[Planner]; P-->I{Covering Index?}; I-->|Yes|MV[Materialized View (server)]; I-->|No|IDX[Choose/Build Index]; MV-->DF[Diff Stream]; DF-->CR[Client Replica Store]; CR-->DV[Derives/Effects in UI];
+flowchart LR
+    Q["query of T"] --> P["Planner"]
+    P --> I{"Covering Index?"}
+    I -->|Yes| MV["Materialized View (server)"]
+    I -->|No| IDX["Choose/Build Index"]
+    IDX --> MV
+    MV --> DF["Diff Stream"]
+    DF --> CR["Client Replica Store"]
+    CR --> DV["Derives/Effects in UI"]
 ```
 
 ### 17.4 Resumable Islands Lifecycle
 
 ```mermaid
-flowchart LR; SSR[SSR HTML]-->|no handlers/state|NZ[Done: 0 JS]; SSR-->|has interaction|IB[Island Bytecode]; IB-->RT[Runtime loads (idle/visible/interaction)]; RT-->RS[Resume reactive graph & events]; RS-->EF[Run effects]; RS-->ER{Error?}; ER-->|yes|BD[Error boundary hooks]; ER-->|no|UI[Interactive UI];
+flowchart LR
+    SSR["SSR HTML"] -->|"no handlers/state"| NZ["Done: 0 JS"]
+    SSR -->|"has interaction"| IB["Island Bytecode"]
+    IB --> RT["Runtime loads (idle/visible/interaction)"]
+    RT --> RS["Resume reactive graph & events"]
+    RS --> EF["Run effects"]
+    RS --> ER{"Error?"}
+    ER -->|yes| BD["Error boundary hooks"]
+    ER -->|no| UI["Interactive UI"]
 ```
 
 ### 17.5 Invariant Enforcement on Write
 
 ```mermaid
-flowchart LR; W[Write (optimistic)]-->MG[CRDT Merge]; MG-->IV[Check Invariants]; IV-->|ok|CM[Commit & replicate]; IV-->|violation|ST{Strategy}; ST-->|repair|RP[Auto repair + notify]; ST-->|reject|CF[Typed Conflict → surface to UI];
+flowchart LR
+    W["Write (optimistic)"] --> MG["CRDT Merge"]
+    MG --> IV["Check Invariants"]
+    IV -->|ok| CM["Commit & replicate"]
+    IV -->|violation| ST{"Strategy"}
+    ST -->|repair| RP["Auto repair + notify"]
+    ST -->|reject| CF["Typed Conflict -> surface to UI"]
 ```
